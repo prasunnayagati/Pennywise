@@ -3,8 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const dataDir = path.resolve(here, "../data");
-export const uploadsDir = path.resolve(here, "../uploads");
+export const dataDir = path.resolve(process.env.DATA_DIR || path.resolve(here, "../data"));
+export const uploadsDir = path.resolve(process.env.UPLOADS_DIR || (process.env.DATA_DIR ? path.join(dataDir, "uploads") : path.resolve(here, "../uploads")));
 const dbFile = path.join(dataDir, "db.json");
 
 const emptyData = () => ({

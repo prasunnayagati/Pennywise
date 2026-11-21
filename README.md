@@ -36,6 +36,15 @@ npm run dev
 Open the Vite URL printed in the terminal (normally `http://localhost:5173`).
 The API runs on `http://localhost:5000`.
 
+## Deploy on Render
+
+Create a Node Web Service from the repository root with:
+
+- Build command: `npm install && npm run build`
+- Start command: `npm start`
+
+The build installs the client and server dependencies, builds the frontend, and the server serves the frontend and API from the same origin. To persist JSON records and receipt images across deployments, attach a persistent disk at `/var/data` and set `DATA_DIR=/var/data`. Without a persistent disk, files written on the service may be lost when its instance is replaced. The app has no authentication; do not enter sensitive financial information on a public deployment.
+
 ## Data and persistence
 
 The server creates `server/data/db.json` on first run with empty collections. Transactions, budgets, goals, subscriptions, receipts metadata and settings are saved there as JSON. Receipt image files are stored in `server/uploads/`. Use **Settings → Clear all data** to remove the saved records and receipt images.

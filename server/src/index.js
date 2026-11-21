@@ -65,6 +65,12 @@ app.put("/api/settings",(req,res)=>{let {displayName,currency,monthlyIncomeTarge
 app.get("/api/analytics/summary",(req,res)=>{let db=read(),month=String(req.query.month||new Date().toISOString().slice(0,7)),tx=db.transactions.filter(t=>t.date.startsWith(month)),income=tx.filter(t=>t.type==="Income").reduce((s,t)=>s+t.amount,0),expenses=tx.filter(t=>t.type==="Expense").reduce((s,t)=>s+t.amount,0),byCategory={};tx.filter(t=>t.type==="Expense").forEach(t=>byCategory[t.category]=(byCategory[t.category]||0)+t.amount);res.json({month,income,expenses,net:income-expenses,balance:db.transactions.reduce((s,t)=>s+(t.type==="Income"?t.amount:-t.amount),0),savingsRate:income?Math.round((income-expenses)/income*100):0,byCategory,transactions:tx.length})});
 app.get("/api/analytics/forecast",(req,res)=>{let tx=read().transactions.filter(t=>t.type==="Expense"),totals={};tx.forEach(t=>{let m=t.date.slice(0,7);totals[m]=(totals[m]||0)+t.amount});let vals=Object.keys(totals).sort().map(k=>totals[k]),recent=vals.slice(-3),last=vals.at(-1)||0,avg=recent.length?recent.reduce((a,b)=>a+b,0)/recent.length:0;const estimate=vals.length?Math.round(avg*.6+last*.4):0;res.json({estimatedNextMonth:estimate,monthlyAverage:Math.round(avg),monthsUsed:vals.length,method:vals.length===1?"Latest month carried forward; only one month of expense history is available":"60% of the recent three-month average + 40% of the latest month",disclaimer:"An indicative estimate based on manually recorded expenses, not financial advice."})});
 app.post("/api/reset",async(req,res)=>{const old=read();for(const receipt of old.receipts||[])await fs.unlink(path.join(uploadsDir,receipt.storedName)).catch(()=>{});res.json(await resetStore())});
+const clientDist = path.resolve(here, "../../client/dist");
+app.use(express.static(clientDist));
+app.get("*",(req,res,next)=>{
+  if(req.path==="/api"||req.path.startsWith("/api/"))return next();
+  res.sendFile(path.join(clientDist,"index.html"),err=>{if(err)next(err)});
+});
 app.use((err,req,res,next)=>{console.error(err);if(err instanceof multer.MulterError)return fail(res,err.code==="LIMIT_FILE_SIZE"?"Image must be 5 MB or smaller.":"Upload failed.");res.status(500).json({error:"Something went wrong on the server."})});
 await initStore();
 app.listen(PORT,()=>console.log(`Pennywise API listening on http://localhost:${PORT}`));
