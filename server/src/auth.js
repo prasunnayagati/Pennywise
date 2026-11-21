@@ -17,13 +17,15 @@ export class AuthError extends Error {
   }
 }
 
-function validateUsername(value) {
-  if (typeof value !== "string") throw new AuthError("Username must be between 1 and 64 characters.");
-  const username = value.trim();
-  if (!username || username.length > 64 || /[\u0000-\u001f\u007f]/.test(username)) {
-    throw new AuthError("Username must be between 1 and 64 characters.");
-  }
-  return username;
+function isEmail(value) {
+  return typeof value === "string" && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function validateEmail(value) {
+  if (typeof value !== "string") throw new AuthError("Enter a valid email address.");
+  const email = value.trim().toLowerCase();
+  if (!isEmail(email)) throw new AuthError("Enter a valid email address.");
+  return email;
 }
 
 function validatePassword(value) {
@@ -95,19 +97,19 @@ export function createAuth({ filePath, setupToken, now = Date.now }) {
     return configuredSetupToken ? null : pendingSetupToken;
   }
 
-  async function setupAccount(token, usernameValue, passwordValue) {
+  async function setupAccount(token, emailValue, passwordValue) {
     if (record || setupInProgress) throw new AuthError("Account setup has already been completed.", 409);
     if (typeof token !== "string" || token.length > 256 || !pendingSetupToken || !safeEqual(token, pendingSetupToken)) {
       throw new AuthError("Setup token is invalid.", 403);
     }
     setupInProgress = true;
     try {
-      const username = validateUsername(usernameValue);
+      const email = validateEmail(emailValue);
       const password = validatePassword(passwordValue);
       const passwordSalt = crypto.randomBytes(16).toString("base64url");
       const nextRecord = {
         version: 1,
-        username,
+        username: email,
         passwordSalt,
         passwordHash: await hashPassword(password, passwordSalt),
         sessionSecret: crypto.randomBytes(32).toString("base64url")
@@ -120,13 +122,16 @@ export function createAuth({ filePath, setupToken, now = Date.now }) {
     }
   }
 
-  async function verifyCredentials(username, password) {
+  async function verifyCredentials(identifier, password) {
     if (!record) return false;
     if (typeof password !== "string" || password.length > 1024) return false;
     const candidateHash = await hashPassword(password, record.passwordSalt);
+    const identityMatches = typeof identifier === "string"
+      && (isEmail(record.username)
+        ? identifier.trim().toLowerCase() === record.username.toLowerCase()
+        : identifier.trim() === record.username);
     return safeEqual(candidateHash, record.passwordHash)
-      && typeof username === "string"
-      && username.trim() === record.username;
+      && identityMatches;
   }
 
   function signSession(payload) {
@@ -185,6 +190,20 @@ export function createAuth({ filePath, setupToken, now = Date.now }) {
     record = nextRecord;
   }
 
+  async function changeEmail(username, currentPassword, newEmail) {
+    if (username !== record?.username) throw new AuthError("Authentication is required.", 401);
+    const email = validateEmail(newEmail);
+    if (!(await verifyCredentials(username, currentPassword))) throw new AuthError("Current password is incorrect.");
+    if (email === record.username) return;
+    const nextRecord = {
+      ...record,
+      username: email,
+      sessionSecret: crypto.randomBytes(32).toString("base64url")
+    };
+    await persist(nextRecord);
+    record = nextRecord;
+  }
+
   function requireAuth(req, res, next) {
     res.set("Cache-Control", "no-store");
     const session = getSession(req);
@@ -193,7 +212,20 @@ export function createAuth({ filePath, setupToken, now = Date.now }) {
     next();
   }
 
-  return { initialize, needsSetup: () => !record, setupAccount, verifyCredentials, getSession, setSessionCookie, clearSessionCookie, changePassword, requireAuth };
+  return {
+    initialize,
+    needsSetup: () => !record,
+    needsEmailUpdate: () => Boolean(record) && !isEmail(record.username),
+    getIdentity: () => record?.username ?? null,
+    setupAccount,
+    verifyCredentials,
+    getSession,
+    setSessionCookie,
+    clearSessionCookie,
+    changePassword,
+    changeEmail,
+    requireAuth
+  };
 }
 
 export const auth = createAuth({

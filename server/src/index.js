@@ -57,7 +57,7 @@ app.get("/api/health",(req,res)=>res.json({status:"ok",service:"Pennywise API"})
 app.get("/api/auth/session",(req,res)=>{
   res.set("Cache-Control","no-store");
   const session=auth.getSession(req);
-  res.json(session?{authenticated:true,username:session.username}:{authenticated:false,setupRequired:auth.needsSetup()});
+  res.json(session?{authenticated:true,email:session.username,emailRequired:auth.needsEmailUpdate()}:{authenticated:false,setupRequired:auth.needsSetup(),emailRequired:auth.needsEmailUpdate()});
 });
 const failedLoginAttempts = new Map();
 const failedSetupAttempts = new Map();
@@ -70,11 +70,11 @@ app.post("/api/auth/setup",async(req,res,next)=>{
   if(!attempts||attempts.expiresAt<=now){attempts={count:0,expiresAt:now+loginWindowMs};failedSetupAttempts.set(key,attempts)}
   if(attempts.count>=maxFailedLogins){res.set("Retry-After",String(Math.ceil((attempts.expiresAt-now)/1000)));return fail(res,"Too many setup attempts. Try again later.",429)}
   try{
-    const {setupToken,username,password}=req.body||{};
-    await auth.setupAccount(setupToken,username,password);
+    const {setupToken,email,password}=req.body||{};
+    await auth.setupAccount(setupToken,email,password);
     failedSetupAttempts.delete(key);
     auth.setSessionCookie(req,res);
-    res.json({authenticated:true,username:username.trim()});
+    res.json({authenticated:true,email:email.trim().toLowerCase(),emailRequired:false});
   }catch(error){
     if(error instanceof AuthError){
       if(error.status===403)attempts.count++;
@@ -91,15 +91,15 @@ app.post("/api/auth/login",async(req,res,next)=>{
   if(attempts.count>=maxFailedLogins){res.set("Retry-After",String(Math.ceil((attempts.expiresAt-now)/1000)));return fail(res,"Too many sign-in attempts. Try again later.",429)}
   if(auth.needsSetup())return fail(res,"Complete the one-time account setup first.",409);
   try{
-    const {username,password}=req.body||{};
-    if(!(await auth.verifyCredentials(username,password))){
+    const {email,password}=req.body||{};
+    if(!(await auth.verifyCredentials(email,password))){
       attempts.count++;
-      return fail(res,"Invalid username or password.",401);
+      return fail(res,"Invalid email or password.",401);
     }
     failedLoginAttempts.delete(key);
     auth.setSessionCookie(req,res);
     res.set("Cache-Control","no-store");
-    res.json({authenticated:true,username:username.trim()});
+    res.json({authenticated:true,email:auth.getIdentity(),emailRequired:auth.needsEmailUpdate()});
   }catch(error){next(error)}
 });
 app.post("/api/auth/logout",(req,res)=>{
@@ -114,6 +114,17 @@ app.post("/api/auth/change-password",async(req,res,next)=>{
     auth.setSessionCookie(req,res,req.authenticatedUser);
     res.set("Cache-Control","no-store");
     res.json({success:true});
+  }catch(error){
+    if(error instanceof AuthError)return fail(res,error.message,error.status);
+    next(error);
+  }
+});
+app.post("/api/auth/change-email",async(req,res,next)=>{
+  try{
+    await auth.changeEmail(req.authenticatedUser,req.body?.currentPassword,req.body?.email);
+    auth.setSessionCookie(req,res);
+    res.set("Cache-Control","no-store");
+    res.json({success:true,email:auth.getIdentity()});
   }catch(error){
     if(error instanceof AuthError)return fail(res,error.message,error.status);
     next(error);
