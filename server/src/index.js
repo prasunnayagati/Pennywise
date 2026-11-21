@@ -6,13 +6,45 @@ import fs from "node:fs/promises";
 import { v4 as uuid } from "uuid";
 import { fileURLToPath } from "node:url";
 import { initStore, read, update, resetStore, uploadsDir } from "./store.js";
+import { auth, AuthError } from "./auth.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const here = path.dirname(fileURLToPath(import.meta.url));
-app.use(cors({origin: process.env.CLIENT_ORIGIN || true}));
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
+const configuredOrigins = new Set((process.env.CLIENT_ORIGIN || "").split(",").map(value => value.trim()).filter(Boolean));
+function isAllowedOrigin(origin) {
+  if (configuredOrigins.has(origin)) return true;
+  if (process.env.NODE_ENV === "production") return false;
+  try {
+    const url = new URL(origin);
+    return url.protocol === "http:" && url.port === "5173";
+  } catch {
+    return false;
+  }
+}
+app.use(cors({
+  origin(origin, callback) {
+    callback(null, origin && isAllowedOrigin(origin) ? origin : false);
+  },
+  credentials: true
+}));
 app.use(express.json({limit:"1mb"}));
-app.use("/uploads", express.static(uploadsDir));
+function verifyRequestOrigin(req,res,next) {
+  if(req.method==="OPTIONS")return next();
+  const origin=req.get("origin"),site=req.get("sec-fetch-site");
+  const requestOrigin = `${req.protocol}://${req.get("host")}`;
+  if(origin&&origin!==requestOrigin&&!isAllowedOrigin(origin))return res.status(403).json({error:"Request origin is not allowed."});
+  if(!origin&&site&&site!=="same-origin"&&site!=="none"){
+    const referrer=req.get("referer");
+    let referrerOrigin;
+    try{referrerOrigin=referrer?new URL(referrer).origin:""}catch{return res.status(403).json({error:"Request origin is not allowed."})}
+    if(!isAllowedOrigin(referrerOrigin))return res.status(403).json({error:"Request origin is not allowed."});
+  }
+  next();
+}
+app.use("/api",verifyRequestOrigin);
 const categories = ["Food & Dining","Shopping","Transportation","Bills & Utilities","Education","Healthcare","Entertainment","Travel","Housing","Other","Salary","Freelance"];
 const fail = (res, msg, status=400) => res.status(status).json({error:msg});
 const validAmount = v => Number.isFinite(Number(v)) && Number(v)>0;
@@ -22,6 +54,72 @@ const upload = multer({
   fileFilter:(req,file,cb)=>cb(null,["image/jpeg","image/png","image/webp"].includes(file.mimetype))
 });
 app.get("/api/health",(req,res)=>res.json({status:"ok",service:"Pennywise API"}));
+app.get("/api/auth/session",(req,res)=>{
+  res.set("Cache-Control","no-store");
+  const session=auth.getSession(req);
+  res.json(session?{authenticated:true,username:session.username}:{authenticated:false,setupRequired:auth.needsSetup()});
+});
+const failedLoginAttempts = new Map();
+const failedSetupAttempts = new Map();
+const loginWindowMs = 15 * 60 * 1000;
+const maxFailedLogins = 5;
+app.post("/api/auth/setup",async(req,res,next)=>{
+  res.set("Cache-Control","no-store");
+  const key=req.ip||req.socket.remoteAddress||"unknown",now=Date.now();
+  let attempts=failedSetupAttempts.get(key);
+  if(!attempts||attempts.expiresAt<=now){attempts={count:0,expiresAt:now+loginWindowMs};failedSetupAttempts.set(key,attempts)}
+  if(attempts.count>=maxFailedLogins){res.set("Retry-After",String(Math.ceil((attempts.expiresAt-now)/1000)));return fail(res,"Too many setup attempts. Try again later.",429)}
+  try{
+    const {setupToken,username,password}=req.body||{};
+    await auth.setupAccount(setupToken,username,password);
+    failedSetupAttempts.delete(key);
+    auth.setSessionCookie(req,res);
+    res.json({authenticated:true,username:username.trim()});
+  }catch(error){
+    if(error instanceof AuthError){
+      if(error.status===403)attempts.count++;
+      return fail(res,error.message,error.status);
+    }
+    next(error);
+  }
+});
+app.post("/api/auth/login",async(req,res,next)=>{
+  res.set("Cache-Control","no-store");
+  const key=req.ip||req.socket.remoteAddress||"unknown",now=Date.now();
+  let attempts=failedLoginAttempts.get(key);
+  if(!attempts||attempts.expiresAt<=now){attempts={count:0,expiresAt:now+loginWindowMs};failedLoginAttempts.set(key,attempts)}
+  if(attempts.count>=maxFailedLogins){res.set("Retry-After",String(Math.ceil((attempts.expiresAt-now)/1000)));return fail(res,"Too many sign-in attempts. Try again later.",429)}
+  if(auth.needsSetup())return fail(res,"Complete the one-time account setup first.",409);
+  try{
+    const {username,password}=req.body||{};
+    if(!(await auth.verifyCredentials(username,password))){
+      attempts.count++;
+      return fail(res,"Invalid username or password.",401);
+    }
+    failedLoginAttempts.delete(key);
+    auth.setSessionCookie(req,res);
+    res.set("Cache-Control","no-store");
+    res.json({authenticated:true,username:username.trim()});
+  }catch(error){next(error)}
+});
+app.post("/api/auth/logout",(req,res)=>{
+  auth.clearSessionCookie(req,res);
+  res.set("Cache-Control","no-store");
+  res.json({success:true});
+});
+app.use("/api",auth.requireAuth);
+app.post("/api/auth/change-password",async(req,res,next)=>{
+  try{
+    await auth.changePassword(req.authenticatedUser,req.body?.currentPassword,req.body?.newPassword);
+    auth.setSessionCookie(req,res,req.authenticatedUser);
+    res.set("Cache-Control","no-store");
+    res.json({success:true});
+  }catch(error){
+    if(error instanceof AuthError)return fail(res,error.message,error.status);
+    next(error);
+  }
+});
+app.use("/uploads",verifyRequestOrigin,auth.requireAuth,express.static(uploadsDir,{setHeaders:res=>res.setHeader("Cache-Control","private, no-store")}));
 
 app.get("/api/transactions",(req,res)=>{
   let {type,category,month,search}=req.query;
@@ -73,4 +171,6 @@ app.get("*",(req,res,next)=>{
 });
 app.use((err,req,res,next)=>{console.error(err);if(err instanceof multer.MulterError)return fail(res,err.code==="LIMIT_FILE_SIZE"?"Image must be 5 MB or smaller.":"Upload failed.");res.status(500).json({error:"Something went wrong on the server."})});
 await initStore();
+const generatedSetupToken=await auth.initialize();
+if(generatedSetupToken)console.warn(`Pennywise one-time setup token (enter this in the account setup screen): ${generatedSetupToken}`);
 app.listen(PORT,()=>console.log(`Pennywise API listening on http://localhost:${PORT}`));

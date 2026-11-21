@@ -3,6 +3,8 @@ client/dist
 server/uploads/*
 !server/uploads/.gitkeep
 server/data/db.json
+server/data/auth.json
+server/data/auth.json.*.tmp
 .env
 .env.*
 !.env.example
