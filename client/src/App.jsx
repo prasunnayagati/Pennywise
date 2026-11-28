@@ -76,7 +76,7 @@ function LoginScreen({error,onLogin}){
    <p className="mt-1 text-sm text-slate-500">Sign in with the same email and password on each of your devices.</p>
    {error&&<p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
    <form onSubmit={submit} className="mt-5 grid gap-4">
-    <label className="block text-xs font-medium text-slate-600">Email address<input className="field-input mt-1.5" name="email" type="text" inputMode="email" autoComplete="username" maxLength="254" placeholder="you@example.com" required/><span className="mt-1 block font-normal text-slate-500">Older accounts can use their former username and update it after signing in.</span></label>
+    <label className="block text-xs font-medium text-slate-600">Email address<input className="field-input mt-1.5" name="email" type="email" inputMode="email" autoComplete="email" maxLength="254" placeholder="you@example.com" required/></label>
     <label className="block text-xs font-medium text-slate-600">Password<input className="field-input mt-1.5" name="password" type="password" autoComplete="current-password" required/></label>
     <button className="btn-primary mt-1 w-full" type="submit" disabled={busy}>{busy?"Signing in…":"Sign in"}</button>
    </form>
@@ -92,7 +92,7 @@ function SetupScreen({error,onSetup}){
   if(values.password!==values.confirmPassword){setPasswordError("Passwords do not match.");return}
   setPasswordError("");
   setBusy(true);
-  if(await onSetup({setupToken:values.setupToken,email:values.email,password:values.password}))form.reset();
+  if(await onSetup({email:values.email,password:values.password}))form.reset();
   setBusy(false);
  }
  return <main className="grid min-h-screen place-items-center bg-[#f7f8f6] px-4 py-8 text-[#17221d]">
@@ -100,17 +100,15 @@ function SetupScreen({error,onSetup}){
    <div className="mb-6 flex items-center gap-3"><img src="/pennywise-logo.png" alt="" className="h-12 w-12 rounded-lg object-cover"/><div><h1 className="text-xl font-bold text-[var(--accent-dark)]">Pennywise</h1><p className="text-xs text-slate-500">Making every penny count</p></div></div>
    <h2 className="text-lg font-semibold">Create your owner account</h2>
    <p className="mt-1 text-sm text-slate-500">Create the email and password you will use to sign in on all your devices.</p>
-   <p className="mt-3 rounded-lg bg-[var(--accent-soft)] p-3 text-xs leading-5 text-[#4b3b50]">Enter the one-time setup token printed in the server logs. If you configured <code>AUTH_SETUP_TOKEN</code>, use that value.</p>
    {error&&<p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
    <form onSubmit={submit} className="mt-5 grid gap-4">
-    <label className="block text-xs font-medium text-slate-600">One-time setup token<input className="field-input mt-1.5" name="setupToken" type="password" autoComplete="off" maxLength="256" required/></label>
     <label className="block text-xs font-medium text-slate-600">Email address<input className="field-input mt-1.5" name="email" type="email" autoComplete="email" maxLength="254" placeholder="you@example.com" required/></label>
     <label className="block text-xs font-medium text-slate-600">Password<input className="field-input mt-1.5" name="password" type="password" autoComplete="new-password" minLength="12" maxLength="1024" required/><span className="mt-1 block font-normal text-slate-500">Use at least 12 characters.</span></label>
     <label className="block text-xs font-medium text-slate-600">Confirm password<input className="field-input mt-1.5" name="confirmPassword" type="password" autoComplete="new-password" minLength="12" maxLength="1024" required/></label>
     {passwordError&&<p role="alert" className="text-sm text-red-700">{passwordError}</p>}
     <button className="btn-primary mt-1 w-full" type="submit" disabled={busy}>{busy?"Saving account…":"Create account"}</button>
    </form>
-   <p className="mt-5 text-xs leading-5 text-slate-500">Setup is available only until the first account is created. The token is not your sign-in password.</p>
+   <p className="mt-5 text-xs leading-5 text-slate-500">Setup is available only until the first account is created. Create your account only on a server you control.</p>
   </section>
  </main>
 }

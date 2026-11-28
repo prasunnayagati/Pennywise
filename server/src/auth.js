@@ -48,6 +48,7 @@ function safeEqual(left, right) {
 function validRecord(record) {
   return record?.version === 1
     && typeof record.username === "string"
+    && isEmail(record.username)
     && typeof record.passwordSalt === "string"
     && typeof record.passwordHash === "string"
     && Buffer.from(record.passwordSalt, "base64url").length === 16
@@ -62,9 +63,8 @@ function cookieValue(req) {
   return entry ? entry.slice(prefix.length) : "";
 }
 
-export function createAuth({ filePath, setupToken, now = Date.now }) {
+export function createAuth({ filePath, now = Date.now }) {
   let record;
-  let pendingSetupToken;
   let setupInProgress = false;
 
   async function persist(nextRecord) {
@@ -89,19 +89,11 @@ export function createAuth({ filePath, setupToken, now = Date.now }) {
       if (error.code !== "ENOENT") throw error;
     }
 
-    const configuredSetupToken = setupToken || null;
-    if (configuredSetupToken && (typeof configuredSetupToken !== "string" || configuredSetupToken.length < 32 || configuredSetupToken.length > 256)) {
-      throw new Error("AUTH_SETUP_TOKEN must be between 32 and 256 characters.");
-    }
-    pendingSetupToken = configuredSetupToken || crypto.randomBytes(32).toString("base64url");
-    return configuredSetupToken ? null : pendingSetupToken;
+    return null;
   }
 
-  async function setupAccount(token, emailValue, passwordValue) {
+  async function setupAccount(emailValue, passwordValue) {
     if (record || setupInProgress) throw new AuthError("Account setup has already been completed.", 409);
-    if (typeof token !== "string" || token.length > 256 || !pendingSetupToken || !safeEqual(token, pendingSetupToken)) {
-      throw new AuthError("Setup token is invalid.", 403);
-    }
     setupInProgress = true;
     try {
       const email = validateEmail(emailValue);
@@ -116,7 +108,6 @@ export function createAuth({ filePath, setupToken, now = Date.now }) {
       };
       await persist(nextRecord);
       record = nextRecord;
-      pendingSetupToken = null;
     } finally {
       setupInProgress = false;
     }
@@ -125,11 +116,15 @@ export function createAuth({ filePath, setupToken, now = Date.now }) {
   async function verifyCredentials(identifier, password) {
     if (!record) return false;
     if (typeof password !== "string" || password.length > 1024) return false;
+    if (typeof identifier !== "string") return false;
+    let email;
+    try {
+      email = validateEmail(identifier);
+    } catch {
+      return false;
+    }
     const candidateHash = await hashPassword(password, record.passwordSalt);
-    const identityMatches = typeof identifier === "string"
-      && (isEmail(record.username)
-        ? identifier.trim().toLowerCase() === record.username.toLowerCase()
-        : identifier.trim() === record.username);
+    const identityMatches = email === record.username;
     return safeEqual(candidateHash, record.passwordHash)
       && identityMatches;
   }
@@ -229,6 +224,5 @@ export function createAuth({ filePath, setupToken, now = Date.now }) {
 }
 
 export const auth = createAuth({
-  filePath: path.join(dataDir, "auth.json"),
-  setupToken: process.env.AUTH_SETUP_TOKEN
+  filePath: path.join(dataDir, "auth.json")
 });

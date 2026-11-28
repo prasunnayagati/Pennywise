@@ -70,14 +70,14 @@ app.post("/api/auth/setup",async(req,res,next)=>{
   if(!attempts||attempts.expiresAt<=now){attempts={count:0,expiresAt:now+loginWindowMs};failedSetupAttempts.set(key,attempts)}
   if(attempts.count>=maxFailedLogins){res.set("Retry-After",String(Math.ceil((attempts.expiresAt-now)/1000)));return fail(res,"Too many setup attempts. Try again later.",429)}
   try{
-    const {setupToken,email,password}=req.body||{};
-    await auth.setupAccount(setupToken,email,password);
+    const {email,password}=req.body||{};
+    await auth.setupAccount(email,password);
     failedSetupAttempts.delete(key);
     auth.setSessionCookie(req,res);
     res.json({authenticated:true,email:email.trim().toLowerCase(),emailRequired:false});
   }catch(error){
     if(error instanceof AuthError){
-      if(error.status===403)attempts.count++;
+      attempts.count++;
       return fail(res,error.message,error.status);
     }
     next(error);
@@ -182,6 +182,5 @@ app.get("*",(req,res,next)=>{
 });
 app.use((err,req,res,next)=>{console.error(err);if(err instanceof multer.MulterError)return fail(res,err.code==="LIMIT_FILE_SIZE"?"Image must be 5 MB or smaller.":"Upload failed.");res.status(500).json({error:"Something went wrong on the server."})});
 await initStore();
-const generatedSetupToken=await auth.initialize();
-if(generatedSetupToken)console.warn(`Pennywise one-time setup token (enter this in the account setup screen): ${generatedSetupToken}`);
+await auth.initialize();
 app.listen(PORT,()=>console.log(`Pennywise API listening on http://localhost:${PORT}`));
